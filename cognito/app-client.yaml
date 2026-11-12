@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Registers one web app with an existing Cognito user pool (shared sign-in). One stack per app.
+  The app gets a confidential client using the authorization-code flow (OpenID Connect).
+
+Parameters:
+  UserPoolId: { Type: String, Description: 'Existing user pool, e.g. eu-west-2_xxxxxxxx' }
+  AppName: { Type: String, Description: 'Short name, e.g. intranet' }
+  BaseUrl: { Type: String, Description: 'Public address of the app, no trailing slash, e.g. https://intranet.example.com' }
+  SessionHours: { Type: Number, Default: 8 }
+
+Resources:
+  Client:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Ref AppName
+      UserPoolId: !Ref UserPoolId
+      GenerateSecret: true
+      SupportedIdentityProviders: [COGNITO]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email]
+      CallbackURLs: [!Sub '${BaseUrl}/auth/callback']
+      LogoutURLs: [!Sub '${BaseUrl}/auth/signed-out']
+      ExplicitAuthFlows: [ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      IdTokenValidity: !Ref SessionHours
+      AccessTokenValidity: !Ref SessionHours
+      TokenValidityUnits: { IdToken: hours, AccessToken: hours }
+
+Outputs:
+  ClientId: { Value: !Ref Client }
+  Issuer: { Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolId}' }

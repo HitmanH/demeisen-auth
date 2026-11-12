@@ -1,0 +1,48 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  A shared sign-in (Cognito user pool) for invited users only, with an authenticator-app code required.
+  Use this for a new organisation. Apps then register with cognito/app-client.yaml.
+
+Parameters:
+  PoolName: { Type: String, Default: example-signin }
+  DomainPrefix: { Type: String, Description: 'Hosted sign-in page prefix: <prefix>.auth.<region>.amazoncognito.com' }
+  OrgName: { Type: String, Default: Example Ltd, Description: Shown in invitation emails }
+  SiteUrl: { Type: String, Description: 'Address included in invitation emails' }
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      UserPoolName: !Ref PoolName
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: !Sub '${OrgName} - invitation'
+          EmailMessage: !Sub >-
+            <p>You have been invited to ${OrgName}'s internal sites.</p>
+            <p>Site: ${SiteUrl}<br>Username: {username}<br>Temporary password: {####}</p>
+            <p>When you first sign in you will choose a new password (at least 14 characters, with upper and lower case,
+            a number and a symbol) and set up an authenticator app for a 6-digit sign-in code.
+            The temporary password expires in 7 days.</p>
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+        EmailSubject: !Sub '${OrgName} - verification code'
+        EmailMessage: '<p>Your verification code is {####}</p>'
+      MfaConfiguration: 'ON'
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      Policies:
+        PasswordPolicy: { MinimumLength: 14, RequireLowercase: true, RequireUppercase: true, RequireNumbers: true, RequireSymbols: true }
+      AccountRecoverySetting:
+        RecoveryMechanisms: [{ Name: verified_email, Priority: 1 }]
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties: { Domain: !Ref DomainPrefix, UserPoolId: !Ref UserPool }
+
+Outputs:
+  UserPoolId: { Value: !Ref UserPool }
+  Issuer: { Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}' }
+  SignInDomain: { Value: !Sub '${DomainPrefix}.auth.${AWS::Region}.amazoncognito.com' }
