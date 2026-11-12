@@ -1,4 +1,4 @@
-/* Demeisen Auth (browser) v1.0.0 — sign-in for single-page apps with an OpenID Connect provider
+/* Demeisen Auth (browser) v1.0.1 — sign-in for single-page apps with an OpenID Connect provider
    (AWS Cognito hosted sign-in by default), using the authorization-code flow with PKCE and a public client.
    Plain script, no build step: defines window.DemeisenAuth. Tokens are kept in sessionStorage (per tab).
 
@@ -8,7 +8,8 @@
    fetch('/api', { headers: { authorization: 'Bearer ' + auth.idToken() } });
    auth.signOut();
 
-   Options: authDomain, clientId, scope ('openid email'), storageKey ('demeisen-id-token'),
+   Options: authDomain, clientId, scope ('openid email'), storageKey ('demeisen-id-token'), pkceKey (storageKey + ':pkce';
+   keep an app's existing name so a page cached from before an update can still complete a sign-in),
    redirectUri (default: site root), and for non-Cognito providers authorizeUrl / tokenUrl / logoutUrl. */
 (function (root) {
   'use strict';
@@ -17,7 +18,8 @@
   const claims = t => JSON.parse(decodeURIComponent(escape(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))));
 
   root.DemeisenAuth = function (o) {
-    const key = o.storageKey || 'demeisen-id-token', pkceKey = key + ':pkce', scope = o.scope || 'openid email';
+    const key = o.storageKey || 'demeisen-id-token', pkceKey = o.pkceKey || key + ':pkce', retryKey = key + ':retry';
+    const scope = o.scope || 'openid email';
     const redirectUri = () => o.redirectUri || location.origin + '/';
     const url = (name, path) => o[name] || `https://${o.authDomain}${path}`;
 
@@ -33,14 +35,23 @@
       location.assign(url('authorizeUrl', '/oauth2/authorize') + '?' + new URLSearchParams({ response_type: 'code', client_id: o.clientId,
         redirect_uri: redirectUri(), scope, state, code_challenge_method: 'S256', code_challenge: challenge }));
     }
-    // Returns true if this page load completed a sign-in; throws if the response can't be trusted.
+    // Returns true if this page load completed a sign-in. If the response doesn't match the request this tab made
+    // (e.g. a different version of the page started it), starts sign-in once more instead of failing; throws only
+    // if that happens twice in a row.
     async function finishSignIn() {
       const q = new URLSearchParams(location.search), code = q.get('code');
       if (!code) return false;
-      const saved = JSON.parse(sessionStorage.getItem(pkceKey) || '{}');
+      let saved = {};
+      try { saved = JSON.parse(sessionStorage.getItem(pkceKey) || '{}'); } catch (e) {}
       sessionStorage.removeItem(pkceKey);
       history.replaceState(null, '', new URL(redirectUri()).pathname + (saved.hash || ''));
-      if (q.get('state') !== saved.state) throw new Error('Sign-in could not be verified. Please try again.');
+      if (!saved.state || q.get('state') !== saved.state) {
+        if (sessionStorage.getItem(retryKey)) { sessionStorage.removeItem(retryKey); throw new Error('Sign-in could not be verified. Please try again.'); }
+        sessionStorage.setItem(retryKey, '1');
+        await signIn();
+        return new Promise(() => {});   // the page is navigating to the sign-in page
+      }
+      sessionStorage.removeItem(retryKey);
       const r = await fetch(url('tokenUrl', '/oauth2/token'), { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ grant_type: 'authorization_code', client_id: o.clientId, code, redirect_uri: redirectUri(), code_verifier: saved.verifier }) });
       if (!r.ok) throw new Error('Sign-in failed. Please try again.');
